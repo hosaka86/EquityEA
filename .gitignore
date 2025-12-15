@@ -1,0 +1,15 @@
+# Claude Code internals
+.claude/
+
+# MQL5 compiled files
+*.ex5
+
+# MetaEditor backups
+*.bak
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

@@ -1,0 +1,745 @@
+//+------------------------------------------------------------------+
+//|                                            EquityMonitor-V100.mq5 |
+//|                                       Developed for YouTube Tutorial |
+//|                                                                      |
+//+------------------------------------------------------------------+
+#property copyright "Your Name"
+#property link      ""
+#property version   "1.00"
+#property description "Equity Monitor EA - Advanced Drawdown Tracking"
+#property description "Version: 1.00 | Initial Release"
+#property description ""
+#property description "Features:"
+#property description "- Real-time equity & drawdown monitoring"
+#property description "- Historical peak tracking (equity-based)"
+#property description "- Trading statistics (Win Rate, Total Trades, P/L)"
+#property description "- Auto-save to file with import capability"
+#property description "- Professional dashboard display"
+
+//+------------------------------------------------------------------+
+//| DEFINES                                                           |
+//+------------------------------------------------------------------+
+#define VERSION "1.00"
+#define DASHBOARD_PREFIX "EM_"  // Prefix for all dashboard objects
+
+//+------------------------------------------------------------------+
+//| INCLUDES                                                          |
+//+------------------------------------------------------------------+
+// No additional includes needed for basic functionality
+
+//+------------------------------------------------------------------+
+//| ENUMERATIONS                                                      |
+//+------------------------------------------------------------------+
+enum ENUM_CORNER_POSITION
+{
+   CORNER_TOP_LEFT = 0,      // Top Left
+   CORNER_TOP_RIGHT = 1,     // Top Right
+   CORNER_BOTTOM_LEFT = 2,   // Bottom Left
+   CORNER_BOTTOM_RIGHT = 3   // Bottom Right
+};
+
+//+------------------------------------------------------------------+
+//| INPUT PARAMETERS                                                  |
+//+------------------------------------------------------------------+
+
+//═══════════════════════════════════════════════════════════════════
+//  GENERAL SETTINGS
+//═══════════════════════════════════════════════════════════════════
+sinput string Sep1 = "════════ GENERAL ════════";
+input int InpMagicNumber = 0;                      // Magic Number (0 = All Trades)
+input string InpTradeComment = "EquityMonitor";    // EA Comment
+
+//═══════════════════════════════════════════════════════════════════
+//  DISPLAY SETTINGS
+//═══════════════════════════════════════════════════════════════════
+sinput string Sep2 = "════════ DISPLAY ════════";
+input bool InpShowDashboard = true;                // Show Dashboard
+input ENUM_CORNER_POSITION InpCornerPosition = CORNER_TOP_LEFT;  // Dashboard Position
+input int InpXOffset = 10;                         // X Offset (Pixels)
+input int InpYOffset = 20;                         // Y Offset (Pixels)
+input int InpFontSize = 9;                         // Font Size
+input color InpColorBackground = C'25,25,25';      // Background Color
+input color InpColorText = clrWhite;               // Text Color
+input color InpColorProfit = clrLimeGreen;         // Profit Color
+input color InpColorLoss = clrRed;                 // Loss Color
+
+//═══════════════════════════════════════════════════════════════════
+//  FILE MANAGEMENT
+//═══════════════════════════════════════════════════════════════════
+sinput string Sep3 = "════════ FILE MANAGEMENT ════════";
+input bool InpEnableAutoSave = true;               // Enable Auto-Save
+input int InpAutoSaveInterval = 60;                // Auto-Save Interval (Minutes)
+input string InpFileName = "EquityMonitor_Stats.csv";  // Stats Filename
+
+//+------------------------------------------------------------------+
+//| GLOBAL VARIABLES - Equity Tracking                               |
+//+------------------------------------------------------------------+
+double g_PeakEquity = 0.0;              // Highest equity ever reached
+double g_MaxDrawdown = 0.0;             // Maximum drawdown in account currency
+double g_MaxDrawdownPercent = 0.0;      // Maximum drawdown in percentage
+
+double g_CurrentEquity = 0.0;           // Current account equity
+double g_CurrentBalance = 0.0;          // Current account balance
+double g_CurrentDrawdown = 0.0;         // Current drawdown in currency
+double g_CurrentDrawdownPercent = 0.0;  // Current drawdown in percentage
+double g_FloatingPL = 0.0;              // Current floating profit/loss
+
+//+------------------------------------------------------------------+
+//| GLOBAL VARIABLES - Trading Statistics                            |
+//+------------------------------------------------------------------+
+int g_TotalTrades = 0;                  // Total closed trades
+int g_WinningTrades = 0;                // Number of winning trades
+int g_LosingTrades = 0;                 // Number of losing trades
+double g_TotalProfit = 0.0;             // Total profit from all trades
+double g_TotalLoss = 0.0;               // Total loss from all trades
+double g_NetProfit = 0.0;               // Net profit/loss (Total Profit - Total Loss)
+double g_WinRate = 0.0;                 // Win rate in percentage
+
+double g_DailyPL = 0.0;                 // Profit/Loss for current day
+datetime g_LastTradeTime = 0;           // Timestamp of last processed trade
+
+//+------------------------------------------------------------------+
+//| GLOBAL VARIABLES - File Management                               |
+//+------------------------------------------------------------------+
+datetime g_LastSaveTime = 0;            // Timestamp of last save operation
+bool g_StatsLoaded = false;             // Flag: Stats loaded from file
+
+//+------------------------------------------------------------------+
+//| GLOBAL VARIABLES - Dashboard                                     |
+//+------------------------------------------------------------------+
+bool g_DashboardCreated = false;        // Flag: Dashboard objects created
+datetime g_LastUpdateTime = 0;          // Timestamp of last dashboard update
+
+//+------------------------------------------------------------------+
+//| Expert initialization function                                    |
+//+------------------------------------------------------------------+
+int OnInit()
+{
+   Print("═══════════════════════════════════════════════════════════");
+   Print("=== ", InpTradeComment, " V", VERSION, " Initialized ===");
+   Print("═══════════════════════════════════════════════════════════");
+
+   // Initialize current account values
+   g_CurrentBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+   g_CurrentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+
+   // Try to load previous statistics from file
+   if(InpEnableAutoSave)
+   {
+      LoadStatsFromFile();
+   }
+
+   // If no stats loaded, initialize with current equity as peak
+   if(!g_StatsLoaded)
+   {
+      g_PeakEquity = g_CurrentEquity;
+      Print("Starting fresh monitoring. Initial Peak Equity: ", g_PeakEquity);
+   }
+
+   // Calculate initial statistics from history
+   CalculateHistoricalStats();
+
+   // Create dashboard if enabled
+   if(InpShowDashboard)
+   {
+      CreateDashboard();
+      g_DashboardCreated = true;
+   }
+
+   // Set initial save time
+   g_LastSaveTime = TimeCurrent();
+   g_LastUpdateTime = TimeCurrent();
+
+   Print("Monitoring started. Peak Equity: ", g_PeakEquity);
+
+   return(INIT_SUCCEEDED);
+}
+
+//+------------------------------------------------------------------+
+//| Expert deinitialization function                                 |
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+{
+   Print("═══════════════════════════════════════════════════════════");
+   Print("=== ", InpTradeComment, " Deinitialized ===");
+   Print("Reason: ", GetDeinitReasonText(reason));
+
+   // Save final statistics before shutdown
+   if(InpEnableAutoSave)
+   {
+      SaveStatsToFile();
+      Print("Final statistics saved to file.");
+   }
+
+   // Remove all dashboard objects
+   DeleteDashboard();
+
+   Print("═══════════════════════════════════════════════════════════");
+}
+
+//+------------------------------------------------------------------+
+//| Expert tick function                                             |
+//+------------------------------------------------------------------+
+void OnTick()
+{
+   // Update account values
+   UpdateAccountValues();
+
+   // Update equity tracking and drawdown calculations
+   UpdateEquityTracking();
+
+   // Check for new closed trades and update statistics
+   UpdateTradingStatistics();
+
+   // Update dashboard display (throttled to avoid excessive updates)
+   if(InpShowDashboard && TimeCurrent() - g_LastUpdateTime >= 1)
+   {
+      UpdateDashboard();
+      g_LastUpdateTime = TimeCurrent();
+   }
+
+   // Auto-save statistics if interval elapsed
+   if(InpEnableAutoSave && ShouldAutoSave())
+   {
+      SaveStatsToFile();
+      g_LastSaveTime = TimeCurrent();
+   }
+}
+
+//+------------------------------------------------------------------+
+//| SECTION: ACCOUNT VALUE UPDATES                                   |
+//+------------------------------------------------------------------+
+
+/**
+ * Updates current account balance, equity, and floating P/L
+ * Called on every tick to ensure real-time accuracy
+ */
+void UpdateAccountValues()
+{
+   g_CurrentBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+   g_CurrentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+   g_FloatingPL = g_CurrentEquity - g_CurrentBalance;
+}
+
+//+------------------------------------------------------------------+
+//| SECTION: EQUITY TRACKING & DRAWDOWN CALCULATION                 |
+//+------------------------------------------------------------------+
+
+/**
+ * Updates peak equity and calculates current/maximum drawdown
+ * Uses equity-based tracking (includes floating P/L)
+ */
+void UpdateEquityTracking()
+{
+   // Update peak equity if current equity is higher
+   if(g_CurrentEquity > g_PeakEquity)
+   {
+      g_PeakEquity = g_CurrentEquity;
+      Print("New Peak Equity reached: ", g_PeakEquity);
+   }
+
+   // Calculate current drawdown from peak
+   g_CurrentDrawdown = g_PeakEquity - g_CurrentEquity;
+
+   // Calculate drawdown percentage
+   if(g_PeakEquity > 0)
+   {
+      g_CurrentDrawdownPercent = (g_CurrentDrawdown / g_PeakEquity) * 100.0;
+   }
+   else
+   {
+      g_CurrentDrawdownPercent = 0.0;
+   }
+
+   // Update maximum drawdown if current is larger
+   if(g_CurrentDrawdown > g_MaxDrawdown)
+   {
+      g_MaxDrawdown = g_CurrentDrawdown;
+      g_MaxDrawdownPercent = g_CurrentDrawdownPercent;
+      Print("New Maximum Drawdown: ", g_MaxDrawdown, " (", g_MaxDrawdownPercent, "%)");
+   }
+}
+
+//+------------------------------------------------------------------+
+//| SECTION: TRADING STATISTICS                                      |
+//+------------------------------------------------------------------+
+
+/**
+ * Calculates historical statistics from closed trades
+ * Called during initialization to load existing trade history
+ */
+void CalculateHistoricalStats()
+{
+   // Reset counters
+   g_TotalTrades = 0;
+   g_WinningTrades = 0;
+   g_LosingTrades = 0;
+   g_TotalProfit = 0.0;
+   g_TotalLoss = 0.0;
+   g_DailyPL = 0.0;
+
+   datetime todayStart = StringToTime(TimeToString(TimeCurrent(), TIME_DATE));
+
+   // Loop through all deals in history
+   HistorySelect(0, TimeCurrent());
+   int totalDeals = HistoryDealsTotal();
+
+   for(int i = 0; i < totalDeals; i++)
+   {
+      ulong ticket = HistoryDealGetTicket(i);
+      if(ticket > 0)
+      {
+         // Filter by magic number if specified (0 = all trades)
+         if(InpMagicNumber != 0 && HistoryDealGetInteger(ticket, DEAL_MAGIC) != InpMagicNumber)
+            continue;
+
+         // Only process entry/exit deals (not balance operations)
+         ENUM_DEAL_ENTRY dealEntry = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(ticket, DEAL_ENTRY);
+         if(dealEntry == DEAL_ENTRY_OUT)  // Exit deal = closed trade
+         {
+            double profit = HistoryDealGetDouble(ticket, DEAL_PROFIT);
+            datetime dealTime = (datetime)HistoryDealGetInteger(ticket, DEAL_TIME);
+
+            g_TotalTrades++;
+
+            if(profit > 0)
+            {
+               g_WinningTrades++;
+               g_TotalProfit += profit;
+            }
+            else if(profit < 0)
+            {
+               g_LosingTrades++;
+               g_TotalLoss += MathAbs(profit);
+            }
+
+            // Add to daily P/L if trade closed today
+            if(dealTime >= todayStart)
+            {
+               g_DailyPL += profit;
+            }
+
+            // Update last trade time
+            if(dealTime > g_LastTradeTime)
+            {
+               g_LastTradeTime = dealTime;
+            }
+         }
+      }
+   }
+
+   // Calculate derived statistics
+   g_NetProfit = g_TotalProfit - g_TotalLoss;
+   g_WinRate = (g_TotalTrades > 0) ? (g_WinningTrades / (double)g_TotalTrades * 100.0) : 0.0;
+
+   Print("Historical Stats Loaded: ", g_TotalTrades, " trades, Win Rate: ", DoubleToString(g_WinRate, 2), "%");
+}
+
+/**
+ * Updates trading statistics with new closed trades
+ * Called on every tick to detect newly closed positions
+ */
+void UpdateTradingStatistics()
+{
+   datetime todayStart = StringToTime(TimeToString(TimeCurrent(), TIME_DATE));
+
+   // Select history and check for new deals
+   HistorySelect(g_LastTradeTime, TimeCurrent());
+   int totalDeals = HistoryDealsTotal();
+
+   bool newTradeFound = false;
+
+   for(int i = 0; i < totalDeals; i++)
+   {
+      ulong ticket = HistoryDealGetTicket(i);
+      if(ticket > 0)
+      {
+         datetime dealTime = (datetime)HistoryDealGetInteger(ticket, DEAL_TIME);
+
+         // Only process deals newer than last processed trade
+         if(dealTime <= g_LastTradeTime)
+            continue;
+
+         // Filter by magic number if specified
+         if(InpMagicNumber != 0 && HistoryDealGetInteger(ticket, DEAL_MAGIC) != InpMagicNumber)
+            continue;
+
+         // Only process exit deals
+         ENUM_DEAL_ENTRY dealEntry = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(ticket, DEAL_ENTRY);
+         if(dealEntry == DEAL_ENTRY_OUT)
+         {
+            double profit = HistoryDealGetDouble(ticket, DEAL_PROFIT);
+
+            g_TotalTrades++;
+            newTradeFound = true;
+
+            if(profit > 0)
+            {
+               g_WinningTrades++;
+               g_TotalProfit += profit;
+            }
+            else if(profit < 0)
+            {
+               g_LosingTrades++;
+               g_TotalLoss += MathAbs(profit);
+            }
+
+            // Add to daily P/L if trade closed today
+            if(dealTime >= todayStart)
+            {
+               g_DailyPL += profit;
+            }
+
+            // Update last trade time
+            if(dealTime > g_LastTradeTime)
+            {
+               g_LastTradeTime = dealTime;
+            }
+         }
+      }
+   }
+
+   // Recalculate derived statistics if new trade found
+   if(newTradeFound)
+   {
+      g_NetProfit = g_TotalProfit - g_TotalLoss;
+      g_WinRate = (g_TotalTrades > 0) ? (g_WinningTrades / (double)g_TotalTrades * 100.0) : 0.0;
+      Print("New trade detected. Total: ", g_TotalTrades, ", Win Rate: ", DoubleToString(g_WinRate, 2), "%");
+   }
+}
+
+//+------------------------------------------------------------------+
+//| SECTION: FILE MANAGEMENT                                         |
+//+------------------------------------------------------------------+
+
+/**
+ * Checks if auto-save interval has elapsed
+ * @return true if save should occur, false otherwise
+ */
+bool ShouldAutoSave()
+{
+   int intervalSeconds = InpAutoSaveInterval * 60;
+   return (TimeCurrent() - g_LastSaveTime >= intervalSeconds);
+}
+
+/**
+ * Saves current statistics to CSV file
+ * File format: timestamp, peak_equity, max_dd, max_dd_pct, total_trades, win_rate, net_profit
+ */
+void SaveStatsToFile()
+{
+   int fileHandle = FileOpen(InpFileName, FILE_WRITE|FILE_CSV|FILE_ANSI);
+
+   if(fileHandle == INVALID_HANDLE)
+   {
+      Print("ERROR: Failed to open file for writing: ", InpFileName);
+      return;
+   }
+
+   // Write header
+   FileWrite(fileHandle, "Timestamp", "PeakEquity", "MaxDrawdown", "MaxDrawdown%",
+             "TotalTrades", "WinningTrades", "LosingTrades", "WinRate%",
+             "TotalProfit", "TotalLoss", "NetProfit", "LastTradeTime");
+
+   // Write current statistics
+   FileWrite(fileHandle,
+             TimeToString(TimeCurrent(), TIME_DATE|TIME_MINUTES),
+             DoubleToString(g_PeakEquity, 2),
+             DoubleToString(g_MaxDrawdown, 2),
+             DoubleToString(g_MaxDrawdownPercent, 2),
+             IntegerToString(g_TotalTrades),
+             IntegerToString(g_WinningTrades),
+             IntegerToString(g_LosingTrades),
+             DoubleToString(g_WinRate, 2),
+             DoubleToString(g_TotalProfit, 2),
+             DoubleToString(g_TotalLoss, 2),
+             DoubleToString(g_NetProfit, 2),
+             TimeToString(g_LastTradeTime, TIME_DATE|TIME_MINUTES)
+            );
+
+   FileClose(fileHandle);
+   Print("Statistics saved to: ", InpFileName);
+}
+
+/**
+ * Loads previous statistics from CSV file
+ * Restores peak equity and max drawdown for continuous monitoring
+ */
+void LoadStatsFromFile()
+{
+   if(!FileIsExist(InpFileName))
+   {
+      Print("No previous stats file found. Starting fresh.");
+      return;
+   }
+
+   int fileHandle = FileOpen(InpFileName, FILE_READ|FILE_CSV|FILE_ANSI);
+
+   if(fileHandle == INVALID_HANDLE)
+   {
+      Print("ERROR: Failed to open file for reading: ", InpFileName);
+      return;
+   }
+
+   // Skip header line
+   string temp = FileReadString(fileHandle);
+
+   // Read last line (most recent stats)
+   // Note: In CSV mode, FileReadString reads until delimiter
+   if(!FileIsEnding(fileHandle))
+   {
+      string timestamp = FileReadString(fileHandle);
+      g_PeakEquity = StringToDouble(FileReadString(fileHandle));
+      g_MaxDrawdown = StringToDouble(FileReadString(fileHandle));
+      g_MaxDrawdownPercent = StringToDouble(FileReadString(fileHandle));
+      g_TotalTrades = (int)StringToInteger(FileReadString(fileHandle));
+      g_WinningTrades = (int)StringToInteger(FileReadString(fileHandle));
+      g_LosingTrades = (int)StringToInteger(FileReadString(fileHandle));
+      g_WinRate = StringToDouble(FileReadString(fileHandle));
+      g_TotalProfit = StringToDouble(FileReadString(fileHandle));
+      g_TotalLoss = StringToDouble(FileReadString(fileHandle));
+      g_NetProfit = StringToDouble(FileReadString(fileHandle));
+      string lastTradeTimeStr = FileReadString(fileHandle);
+      g_LastTradeTime = StringToTime(lastTradeTimeStr);
+
+      g_StatsLoaded = true;
+      Print("Previous stats loaded from file:");
+      Print("  Peak Equity: ", g_PeakEquity);
+      Print("  Max Drawdown: ", g_MaxDrawdown, " (", g_MaxDrawdownPercent, "%)");
+      Print("  Total Trades: ", g_TotalTrades);
+   }
+
+   FileClose(fileHandle);
+}
+
+//+------------------------------------------------------------------+
+//| SECTION: DASHBOARD VISUALIZATION                                 |
+//+------------------------------------------------------------------+
+
+/**
+ * Creates all dashboard objects on the chart
+ */
+void CreateDashboard()
+{
+   // Background panel
+   CreateLabel(DASHBOARD_PREFIX + "BG", "", InpXOffset, InpYOffset, InpCornerPosition,
+               InpFontSize + 2, InpColorBackground, "Consolas");
+
+   // Title
+   CreateLabel(DASHBOARD_PREFIX + "Title", "═══ EQUITY MONITOR V" + VERSION + " ═══",
+               InpXOffset + 5, InpYOffset + 5, InpCornerPosition, InpFontSize + 1, clrGold, "Arial Black");
+
+   int yPos = InpYOffset + 25;
+   int lineHeight = InpFontSize + 8;
+
+   // Section: Current Status
+   CreateLabel(DASHBOARD_PREFIX + "SecCurrent", "─── Current Status ───",
+               InpXOffset + 5, yPos, InpCornerPosition, InpFontSize, clrSilver, "Arial");
+   yPos += lineHeight;
+
+   CreateLabel(DASHBOARD_PREFIX + "Balance", "Balance:",
+               InpXOffset + 10, yPos, InpCornerPosition, InpFontSize, InpColorText, "Consolas");
+   CreateLabel(DASHBOARD_PREFIX + "BalanceVal", "",
+               InpXOffset + 150, yPos, InpCornerPosition, InpFontSize, InpColorText, "Consolas");
+   yPos += lineHeight;
+
+   CreateLabel(DASHBOARD_PREFIX + "Equity", "Equity:",
+               InpXOffset + 10, yPos, InpCornerPosition, InpFontSize, InpColorText, "Consolas");
+   CreateLabel(DASHBOARD_PREFIX + "EquityVal", "",
+               InpXOffset + 150, yPos, InpCornerPosition, InpFontSize, InpColorText, "Consolas");
+   yPos += lineHeight;
+
+   CreateLabel(DASHBOARD_PREFIX + "Floating", "Floating P/L:",
+               InpXOffset + 10, yPos, InpCornerPosition, InpFontSize, InpColorText, "Consolas");
+   CreateLabel(DASHBOARD_PREFIX + "FloatingVal", "",
+               InpXOffset + 150, yPos, InpCornerPosition, InpFontSize, InpColorText, "Consolas");
+   yPos += lineHeight + 5;
+
+   // Section: Drawdown
+   CreateLabel(DASHBOARD_PREFIX + "SecDD", "─── Drawdown Analysis ───",
+               InpXOffset + 5, yPos, InpCornerPosition, InpFontSize, clrSilver, "Arial");
+   yPos += lineHeight;
+
+   CreateLabel(DASHBOARD_PREFIX + "Peak", "Peak Equity:",
+               InpXOffset + 10, yPos, InpCornerPosition, InpFontSize, InpColorText, "Consolas");
+   CreateLabel(DASHBOARD_PREFIX + "PeakVal", "",
+               InpXOffset + 150, yPos, InpCornerPosition, InpFontSize, clrLimeGreen, "Consolas");
+   yPos += lineHeight;
+
+   CreateLabel(DASHBOARD_PREFIX + "CurrDD", "Current DD:",
+               InpXOffset + 10, yPos, InpCornerPosition, InpFontSize, InpColorText, "Consolas");
+   CreateLabel(DASHBOARD_PREFIX + "CurrDDVal", "",
+               InpXOffset + 150, yPos, InpCornerPosition, InpFontSize, InpColorText, "Consolas");
+   yPos += lineHeight;
+
+   CreateLabel(DASHBOARD_PREFIX + "MaxDD", "Max DD:",
+               InpXOffset + 10, yPos, InpCornerPosition, InpFontSize, InpColorText, "Consolas");
+   CreateLabel(DASHBOARD_PREFIX + "MaxDDVal", "",
+               InpXOffset + 150, yPos, InpCornerPosition, InpFontSize, clrRed, "Consolas");
+   yPos += lineHeight + 5;
+
+   // Section: Trading Stats
+   CreateLabel(DASHBOARD_PREFIX + "SecStats", "─── Trading Statistics ───",
+               InpXOffset + 5, yPos, InpCornerPosition, InpFontSize, clrSilver, "Arial");
+   yPos += lineHeight;
+
+   CreateLabel(DASHBOARD_PREFIX + "TotalTrades", "Total Trades:",
+               InpXOffset + 10, yPos, InpCornerPosition, InpFontSize, InpColorText, "Consolas");
+   CreateLabel(DASHBOARD_PREFIX + "TotalTradesVal", "",
+               InpXOffset + 150, yPos, InpCornerPosition, InpFontSize, InpColorText, "Consolas");
+   yPos += lineHeight;
+
+   CreateLabel(DASHBOARD_PREFIX + "WinRate", "Win Rate:",
+               InpXOffset + 10, yPos, InpCornerPosition, InpFontSize, InpColorText, "Consolas");
+   CreateLabel(DASHBOARD_PREFIX + "WinRateVal", "",
+               InpXOffset + 150, yPos, InpCornerPosition, InpFontSize, InpColorText, "Consolas");
+   yPos += lineHeight;
+
+   CreateLabel(DASHBOARD_PREFIX + "NetProfit", "Net Profit:",
+               InpXOffset + 10, yPos, InpCornerPosition, InpFontSize, InpColorText, "Consolas");
+   CreateLabel(DASHBOARD_PREFIX + "NetProfitVal", "",
+               InpXOffset + 150, yPos, InpCornerPosition, InpFontSize, InpColorText, "Consolas");
+   yPos += lineHeight;
+
+   CreateLabel(DASHBOARD_PREFIX + "DailyPL", "Daily P/L:",
+               InpXOffset + 10, yPos, InpCornerPosition, InpFontSize, InpColorText, "Consolas");
+   CreateLabel(DASHBOARD_PREFIX + "DailyPLVal", "",
+               InpXOffset + 150, yPos, InpCornerPosition, InpFontSize, InpColorText, "Consolas");
+   yPos += lineHeight + 5;
+
+   // Footer
+   CreateLabel(DASHBOARD_PREFIX + "Footer", "Auto-save: " + (InpEnableAutoSave ? "ON" : "OFF"),
+               InpXOffset + 5, yPos, InpCornerPosition, InpFontSize - 1, clrDimGray, "Arial");
+
+   Print("Dashboard created successfully.");
+}
+
+/**
+ * Updates all dashboard values with current statistics
+ */
+void UpdateDashboard()
+{
+   if(!g_DashboardCreated) return;
+
+   string currency = AccountInfoString(ACCOUNT_CURRENCY);
+
+   // Current Status
+   UpdateLabelText(DASHBOARD_PREFIX + "BalanceVal", DoubleToString(g_CurrentBalance, 2) + " " + currency);
+   UpdateLabelText(DASHBOARD_PREFIX + "EquityVal", DoubleToString(g_CurrentEquity, 2) + " " + currency);
+
+   // Floating P/L with color
+   color floatingColor = (g_FloatingPL >= 0) ? InpColorProfit : InpColorLoss;
+   UpdateLabelText(DASHBOARD_PREFIX + "FloatingVal", DoubleToString(g_FloatingPL, 2) + " " + currency);
+   UpdateLabelColor(DASHBOARD_PREFIX + "FloatingVal", floatingColor);
+
+   // Drawdown
+   UpdateLabelText(DASHBOARD_PREFIX + "PeakVal", DoubleToString(g_PeakEquity, 2) + " " + currency);
+   UpdateLabelText(DASHBOARD_PREFIX + "CurrDDVal",
+                   DoubleToString(g_CurrentDrawdown, 2) + " (" + DoubleToString(g_CurrentDrawdownPercent, 2) + "%)");
+   UpdateLabelText(DASHBOARD_PREFIX + "MaxDDVal",
+                   DoubleToString(g_MaxDrawdown, 2) + " (" + DoubleToString(g_MaxDrawdownPercent, 2) + "%)");
+
+   // Trading Stats
+   UpdateLabelText(DASHBOARD_PREFIX + "TotalTradesVal",
+                   IntegerToString(g_TotalTrades) + " (W:" + IntegerToString(g_WinningTrades) +
+                   " L:" + IntegerToString(g_LosingTrades) + ")");
+   UpdateLabelText(DASHBOARD_PREFIX + "WinRateVal", DoubleToString(g_WinRate, 2) + "%");
+
+   // Net Profit with color
+   color profitColor = (g_NetProfit >= 0) ? InpColorProfit : InpColorLoss;
+   UpdateLabelText(DASHBOARD_PREFIX + "NetProfitVal", DoubleToString(g_NetProfit, 2) + " " + currency);
+   UpdateLabelColor(DASHBOARD_PREFIX + "NetProfitVal", profitColor);
+
+   // Daily P/L with color
+   color dailyColor = (g_DailyPL >= 0) ? InpColorProfit : InpColorLoss;
+   UpdateLabelText(DASHBOARD_PREFIX + "DailyPLVal", DoubleToString(g_DailyPL, 2) + " " + currency);
+   UpdateLabelColor(DASHBOARD_PREFIX + "DailyPLVal", dailyColor);
+
+   ChartRedraw();
+}
+
+/**
+ * Deletes all dashboard objects from chart
+ */
+void DeleteDashboard()
+{
+   // Delete all objects with dashboard prefix
+   int total = ObjectsTotal(0, 0, -1);
+
+   for(int i = total - 1; i >= 0; i--)
+   {
+      string objName = ObjectName(0, i, 0, -1);
+      if(StringFind(objName, DASHBOARD_PREFIX) == 0)
+      {
+         ObjectDelete(0, objName);
+      }
+   }
+
+   ChartRedraw();
+   Print("Dashboard deleted.");
+}
+
+//+------------------------------------------------------------------+
+//| HELPER FUNCTIONS: Object Creation & Manipulation                 |
+//+------------------------------------------------------------------+
+
+/**
+ * Creates a text label object on the chart
+ */
+void CreateLabel(string name, string text, int x, int y, ENUM_CORNER_POSITION corner,
+                 int fontSize, color clr, string font)
+{
+   ObjectCreate(0, name, OBJ_LABEL, 0, 0, 0);
+   ObjectSetInteger(0, name, OBJPROP_CORNER, corner);
+   ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x);
+   ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
+   ObjectSetInteger(0, name, OBJPROP_FONTSIZE, fontSize);
+   ObjectSetString(0, name, OBJPROP_FONT, font);
+   ObjectSetString(0, name, OBJPROP_TEXT, text);
+   ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+}
+
+/**
+ * Updates the text of an existing label
+ */
+void UpdateLabelText(string name, string text)
+{
+   ObjectSetString(0, name, OBJPROP_TEXT, text);
+}
+
+/**
+ * Updates the color of an existing label
+ */
+void UpdateLabelColor(string name, color clr)
+{
+   ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
+}
+
+//+------------------------------------------------------------------+
+//| HELPER FUNCTIONS: Utility                                        |
+//+------------------------------------------------------------------+
+
+/**
+ * Returns human-readable deinitialization reason
+ */
+string GetDeinitReasonText(int reason)
+{
+   switch(reason)
+   {
+      case REASON_PROGRAM:     return "EA stopped by user";
+      case REASON_REMOVE:      return "EA removed from chart";
+      case REASON_RECOMPILE:   return "EA recompiled";
+      case REASON_CHARTCHANGE: return "Chart symbol/period changed";
+      case REASON_CHARTCLOSE:  return "Chart closed";
+      case REASON_PARAMETERS:  return "Input parameters changed";
+      case REASON_ACCOUNT:     return "Account changed";
+      case REASON_TEMPLATE:    return "Template applied";
+      case REASON_INITFAILED:  return "Initialization failed";
+      case REASON_CLOSE:       return "Terminal closing";
+      default:                 return "Unknown reason";
+   }
+}
+
+//+------------------------------------------------------------------+
