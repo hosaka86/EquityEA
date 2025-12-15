@@ -11,7 +11,7 @@
 #property description ""
 #property description "Features:"
 #property description "- Real-time equity & drawdown monitoring"
-#property description "- Historical peak tracking (equity-based)"
+#property description "- Configurable peak tracking (equity or balance based)"
 #property description "- Trading statistics (Win Rate, Total Trades, P/L)"
 #property description "- Auto-save to file with import capability"
 #property description "- Professional dashboard display"
@@ -38,6 +38,27 @@ enum ENUM_CORNER_POSITION
    CORNER_BOTTOM_RIGHT = 3   // Bottom Right
 };
 
+/**
+ * Drawdown Calculation Modes:
+ *
+ * DRAWDOWN_EQUITY (Equity-based):
+ *   - Peak tracking includes floating P/L from open positions
+ *   - Drawdown reflects unrealized profits/losses
+ *   - More responsive to market movements
+ *   - Example: If you have +$500 floating profit, peak can be updated
+ *
+ * DRAWDOWN_BALANCE (Balance-based):
+ *   - Peak tracking based only on closed trades (account balance)
+ *   - Drawdown ignores open positions
+ *   - More conservative measurement
+ *   - Example: Peak only updates when trades are closed with profit
+ */
+enum ENUM_DRAWDOWN_MODE
+{
+   DRAWDOWN_EQUITY = 0,      // Equity-based (includes floating P/L)
+   DRAWDOWN_BALANCE = 1      // Balance-based (closed trades only)
+};
+
 //+------------------------------------------------------------------+
 //| INPUT PARAMETERS                                                  |
 //+------------------------------------------------------------------+
@@ -48,6 +69,7 @@ enum ENUM_CORNER_POSITION
 sinput string Sep1 = "════════ GENERAL ════════";
 input int InpMagicNumber = 0;                      // Magic Number (0 = All Trades)
 input string InpTradeComment = "EquityMonitor";    // EA Comment
+input ENUM_DRAWDOWN_MODE InpDrawdownMode = DRAWDOWN_EQUITY;  // Drawdown Calculation Mode
 
 //═══════════════════════════════════════════════════════════════════
 //  DISPLAY SETTINGS
@@ -129,11 +151,19 @@ int OnInit()
       LoadStatsFromFile();
    }
 
-   // If no stats loaded, initialize with current equity as peak
+   // If no stats loaded, initialize with current value as peak (based on mode)
    if(!g_StatsLoaded)
    {
-      g_PeakEquity = g_CurrentEquity;
-      Print("Starting fresh monitoring. Initial Peak Equity: ", g_PeakEquity);
+      if(InpDrawdownMode == DRAWDOWN_EQUITY)
+      {
+         g_PeakEquity = g_CurrentEquity;
+         Print("Starting fresh monitoring (Equity mode). Initial Peak: ", g_PeakEquity);
+      }
+      else
+      {
+         g_PeakEquity = g_CurrentBalance;
+         Print("Starting fresh monitoring (Balance mode). Initial Peak: ", g_PeakEquity);
+      }
    }
 
    // Calculate initial statistics from history
@@ -227,19 +257,34 @@ void UpdateAccountValues()
 
 /**
  * Updates peak equity and calculates current/maximum drawdown
- * Uses equity-based tracking (includes floating P/L)
+ * Supports both equity-based and balance-based tracking
  */
 void UpdateEquityTracking()
 {
-   // Update peak equity if current equity is higher
-   if(g_CurrentEquity > g_PeakEquity)
+   // Determine which value to use for peak tracking based on mode
+   double currentValue = 0.0;
+
+   if(InpDrawdownMode == DRAWDOWN_EQUITY)
    {
-      g_PeakEquity = g_CurrentEquity;
-      Print("New Peak Equity reached: ", g_PeakEquity);
+      // Equity mode: includes floating P/L
+      currentValue = g_CurrentEquity;
+   }
+   else
+   {
+      // Balance mode: closed trades only (no floating P/L)
+      currentValue = g_CurrentBalance;
+   }
+
+   // Update peak if current value is higher
+   if(currentValue > g_PeakEquity)
+   {
+      g_PeakEquity = currentValue;
+      string mode = (InpDrawdownMode == DRAWDOWN_EQUITY) ? "Equity" : "Balance";
+      Print("New Peak ", mode, " reached: ", g_PeakEquity);
    }
 
    // Calculate current drawdown from peak
-   g_CurrentDrawdown = g_PeakEquity - g_CurrentEquity;
+   g_CurrentDrawdown = g_PeakEquity - currentValue;
 
    // Calculate drawdown percentage
    if(g_PeakEquity > 0)
@@ -556,11 +601,12 @@ void CreateDashboard()
    yPos += lineHeight + 5;
 
    // Section: Drawdown
-   CreateLabel(DASHBOARD_PREFIX + "SecDD", "─── Drawdown Analysis ───",
+   string ddMode = (InpDrawdownMode == DRAWDOWN_EQUITY) ? "Equity" : "Balance";
+   CreateLabel(DASHBOARD_PREFIX + "SecDD", "─── Drawdown Analysis (" + ddMode + " Mode) ───",
                InpXOffset + 5, yPos, InpCornerPosition, InpFontSize, clrSilver, "Arial");
    yPos += lineHeight;
 
-   CreateLabel(DASHBOARD_PREFIX + "Peak", "Peak Equity:",
+   CreateLabel(DASHBOARD_PREFIX + "Peak", "Peak " + ddMode + ":",
                InpXOffset + 10, yPos, InpCornerPosition, InpFontSize, InpColorText, "Consolas");
    CreateLabel(DASHBOARD_PREFIX + "PeakVal", "",
                InpXOffset + 150, yPos, InpCornerPosition, InpFontSize, clrLimeGreen, "Consolas");
