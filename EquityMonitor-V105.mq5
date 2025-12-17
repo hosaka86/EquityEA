@@ -1,13 +1,13 @@
 //+------------------------------------------------------------------+
-//|                                            EquityMonitor-V104.mq5 |
+//|                                            EquityMonitor-V105.mq5 |
 //|                                       Developed for YouTube Tutorial |
 //|                                                                      |
 //+------------------------------------------------------------------+
 #property copyright "Your Name"
 #property link      ""
-#property version   "1.04"
+#property version   "1.05"
 #property description "Equity Monitor EA - Advanced Drawdown Tracking"
-#property description "Version: 1.04 | Improved killswitch position closing with retry logic"
+#property description "Version: 1.05 | Reduced log spam by throttling routine messages"
 #property description ""
 #property description "Features:"
 #property description "- Real-time equity & drawdown monitoring"
@@ -19,7 +19,7 @@
 //+------------------------------------------------------------------+
 //| DEFINES                                                           |
 //+------------------------------------------------------------------+
-#define VERSION "1.04"
+#define VERSION "1.05"
 #define DASHBOARD_PREFIX "EM_"  // Prefix for all dashboard objects
 
 //+------------------------------------------------------------------+
@@ -147,6 +147,11 @@ datetime g_LastUpdateTime = 0;          // Timestamp of last dashboard update
 bool g_KillswitchTriggered = false;     // Flag: Killswitch has been activated
 datetime g_KillswitchTriggerTime = 0;   // Timestamp when killswitch was triggered
 bool g_AlertShown = false;              // Flag: Alert already shown to user
+
+//+------------------------------------------------------------------+
+//| GLOBAL VARIABLES - Logging Control                               |
+//+------------------------------------------------------------------+
+datetime g_LastLogTime = 0;             // Timestamp of last regular log output
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                    |
@@ -298,8 +303,13 @@ void UpdateEquityTracking()
    if(currentValue > g_PeakEquity)
    {
       g_PeakEquity = currentValue;
-      string mode = (InpDrawdownMode == DRAWDOWN_EQUITY) ? "Equity" : "Balance";
-      Print("New Peak ", mode, " reached: ", g_PeakEquity);
+
+      // Only log at save intervals to reduce spam
+      if(ShouldAutoSave() || g_LastLogTime == 0)
+      {
+         string mode = (InpDrawdownMode == DRAWDOWN_EQUITY) ? "Equity" : "Balance";
+         Print("New Peak ", mode, " reached: ", g_PeakEquity);
+      }
    }
 
    // Calculate current drawdown from peak
@@ -320,7 +330,12 @@ void UpdateEquityTracking()
    {
       g_MaxDrawdown = g_CurrentDrawdown;
       g_MaxDrawdownPercent = g_CurrentDrawdownPercent;
-      Print("New Maximum Drawdown: ", g_MaxDrawdown, " (", g_MaxDrawdownPercent, "%)");
+
+      // Only log at save intervals to reduce spam
+      if(ShouldAutoSave() || g_LastLogTime == 0)
+      {
+         Print("New Maximum Drawdown: ", g_MaxDrawdown, " (", g_MaxDrawdownPercent, "%)");
+      }
    }
 }
 
@@ -486,7 +501,12 @@ void UpdateTradingStatistics()
    {
       g_NetProfit = g_TotalProfit - g_TotalLoss;
       g_WinRate = (g_TotalTrades > 0) ? (g_WinningTrades / (double)g_TotalTrades * 100.0) : 0.0;
-      Print("New trade detected. Total: ", g_TotalTrades, ", Win Rate: ", DoubleToString(g_WinRate, 2), "%");
+
+      // Only log at save intervals to reduce spam
+      if(ShouldAutoSave() || g_LastLogTime == 0)
+      {
+         Print("New trade detected. Total: ", g_TotalTrades, ", Win Rate: ", DoubleToString(g_WinRate, 2), "%");
+      }
    }
 }
 
@@ -723,6 +743,9 @@ void SaveStatsToFile()
 
    FileClose(fileHandle);
    Print("Statistics saved to: ", InpFileName);
+
+   // Update log timestamp to sync with save intervals
+   g_LastLogTime = TimeCurrent();
 }
 
 /**
