@@ -575,12 +575,14 @@ ENUM_ORDER_TYPE_FILLING GetSymbolFillingMode(string symbol)
    // Get supported filling modes from symbol
    uint filling = (uint)SymbolInfoInteger(symbol, SYMBOL_FILLING_MODE);
 
+   // Filling mode flags (bit values):
+   // 1 = FOK, 2 = IOC, 4 = RETURN
    // Try in order of preference: Return, IOC, FOK
-   if((filling & SYMBOL_FILLING_RETURN) == SYMBOL_FILLING_RETURN)
+   if((filling & 4) == 4)  // RETURN flag
       return ORDER_FILLING_RETURN;
-   else if((filling & SYMBOL_FILLING_IOC) == SYMBOL_FILLING_IOC)
+   else if((filling & 2) == 2)  // IOC flag
       return ORDER_FILLING_IOC;
-   else if((filling & SYMBOL_FILLING_FOK) == SYMBOL_FILLING_FOK)
+   else if((filling & 1) == 1)  // FOK flag
       return ORDER_FILLING_FOK;
 
    // Default to Return if nothing else works
