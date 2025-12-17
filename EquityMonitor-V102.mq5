@@ -1,13 +1,13 @@
 //+------------------------------------------------------------------+
-//|                                            EquityMonitor-V101.mq5 |
+//|                                            EquityMonitor-V102.mq5 |
 //|                                       Developed for YouTube Tutorial |
 //|                                                                      |
 //+------------------------------------------------------------------+
 #property copyright "Your Name"
 #property link      ""
-#property version   "1.01"
+#property version   "1.02"
 #property description "Equity Monitor EA - Advanced Drawdown Tracking"
-#property description "Version: 1.01 | Fixed daily PNL reset on new day"
+#property description "Version: 1.02 | Added killswitch protection feature"
 #property description ""
 #property description "Features:"
 #property description "- Real-time equity & drawdown monitoring"
@@ -19,7 +19,7 @@
 //+------------------------------------------------------------------+
 //| DEFINES                                                           |
 //+------------------------------------------------------------------+
-#define VERSION "1.01"
+#define VERSION "1.02"
 #define DASHBOARD_PREFIX "EM_"  // Prefix for all dashboard objects
 
 //+------------------------------------------------------------------+
@@ -93,6 +93,14 @@ input bool InpEnableAutoSave = true;               // Enable Auto-Save
 input int InpAutoSaveInterval = 60;                // Auto-Save Interval (Minutes)
 input string InpFileName = "EquityMonitor_Stats.csv";  // Stats Filename
 
+//═══════════════════════════════════════════════════════════════════
+//  KILLSWITCH PROTECTION
+//═══════════════════════════════════════════════════════════════════
+sinput string Sep4 = "════════ KILLSWITCH ════════";
+input double InpMaxDrawdownThreshold = 0.0;        // Max Drawdown Threshold % (0 = Disabled)
+input bool InpAggressiveCloseMode = false;         // Aggressive Mode (Continuously Close Positions)
+input bool InpKillswitchAlert = true;              // Show Alert When Triggered
+
 //+------------------------------------------------------------------+
 //| GLOBAL VARIABLES - Equity Tracking                               |
 //+------------------------------------------------------------------+
@@ -132,6 +140,13 @@ bool g_StatsLoaded = false;             // Flag: Stats loaded from file
 //+------------------------------------------------------------------+
 bool g_DashboardCreated = false;        // Flag: Dashboard objects created
 datetime g_LastUpdateTime = 0;          // Timestamp of last dashboard update
+
+//+------------------------------------------------------------------+
+//| GLOBAL VARIABLES - Killswitch                                    |
+//+------------------------------------------------------------------+
+bool g_KillswitchTriggered = false;     // Flag: Killswitch has been activated
+datetime g_KillswitchTriggerTime = 0;   // Timestamp when killswitch was triggered
+bool g_AlertShown = false;              // Flag: Alert already shown to user
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                    |
@@ -218,6 +233,9 @@ void OnTick()
 
    // Update equity tracking and drawdown calculations
    UpdateEquityTracking();
+
+   // Monitor killswitch and close positions if threshold exceeded
+   MonitorKillswitch();
 
    // Check for new closed trades and update statistics
    UpdateTradingStatistics();
@@ -461,6 +479,124 @@ void UpdateTradingStatistics()
       g_WinRate = (g_TotalTrades > 0) ? (g_WinningTrades / (double)g_TotalTrades * 100.0) : 0.0;
       Print("New trade detected. Total: ", g_TotalTrades, ", Win Rate: ", DoubleToString(g_WinRate, 2), "%");
    }
+}
+
+//+------------------------------------------------------------------+
+//| SECTION: KILLSWITCH PROTECTION                                   |
+//+------------------------------------------------------------------+
+
+/**
+ * Monitors drawdown and triggers killswitch if threshold is exceeded
+ * Supports two modes: Standard (close once) and Aggressive (continuous close)
+ */
+void MonitorKillswitch()
+{
+   // Skip if killswitch is disabled (threshold = 0)
+   if(InpMaxDrawdownThreshold <= 0.0)
+      return;
+
+   // Check if drawdown threshold is exceeded
+   if(g_CurrentDrawdownPercent >= InpMaxDrawdownThreshold)
+   {
+      // Trigger killswitch if not already triggered
+      if(!g_KillswitchTriggered)
+      {
+         g_KillswitchTriggered = true;
+         g_KillswitchTriggerTime = TimeCurrent();
+
+         Print("═══════════════════════════════════════════════════════════");
+         Print("!!! KILLSWITCH TRIGGERED !!!");
+         Print("Max Drawdown Threshold Exceeded: ", DoubleToString(g_CurrentDrawdownPercent, 2), "% >= ",
+               DoubleToString(InpMaxDrawdownThreshold, 2), "%");
+         Print("═══════════════════════════════════════════════════════════");
+
+         // Show alert to user (once)
+         if(InpKillswitchAlert && !g_AlertShown)
+         {
+            string alertMsg = "KILLSWITCH TRIGGERED!\n\n" +
+                            "Drawdown: " + DoubleToString(g_CurrentDrawdownPercent, 2) + "%\n" +
+                            "Threshold: " + DoubleToString(InpMaxDrawdownThreshold, 2) + "%\n\n" +
+                            "Closing all positions...";
+            Alert(alertMsg);
+            g_AlertShown = true;
+         }
+
+         // Close all positions (Standard Mode)
+         CloseAllPositions();
+      }
+
+      // Aggressive Mode: Keep closing any positions that appear
+      if(InpAggressiveCloseMode && g_KillswitchTriggered)
+      {
+         CloseAllPositions();
+      }
+   }
+}
+
+/**
+ * Closes all open positions on the account
+ * Works with any magic number (closes positions from all EAs)
+ * @return Number of positions closed
+ */
+int CloseAllPositions()
+{
+   int totalPositions = PositionsTotal();
+   int closedCount = 0;
+
+   if(totalPositions == 0)
+      return 0;
+
+   // Iterate backwards to avoid index shifting issues
+   for(int i = totalPositions - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket > 0)
+      {
+         string symbol = PositionGetString(POSITION_SYMBOL);
+         ulong magic = PositionGetInteger(POSITION_MAGIC);
+
+         // Close the position
+         MqlTradeRequest request;
+         MqlTradeResult result;
+         ZeroMemory(request);
+         ZeroMemory(result);
+
+         request.action = TRADE_ACTION_DEAL;
+         request.position = ticket;
+         request.symbol = symbol;
+         request.volume = PositionGetDouble(POSITION_VOLUME);
+         request.deviation = 10;
+         request.magic = magic;
+         request.comment = "Killswitch Close";
+
+         // Determine close direction
+         if(PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY)
+            request.type = ORDER_TYPE_SELL;
+         else
+            request.type = ORDER_TYPE_BUY;
+
+         request.price = (request.type == ORDER_TYPE_SELL) ?
+                        SymbolInfoDouble(symbol, SYMBOL_BID) :
+                        SymbolInfoDouble(symbol, SYMBOL_ASK);
+
+         if(OrderSend(request, result))
+         {
+            closedCount++;
+            Print("Killswitch closed position #", ticket, " (", symbol, ")");
+         }
+         else
+         {
+            Print("ERROR: Failed to close position #", ticket, " - Error code: ", GetLastError());
+         }
+      }
+   }
+
+   if(closedCount > 0)
+   {
+      Print("Killswitch closed ", closedCount, " position(s)");
+   }
+
+   return closedCount;
 }
 
 //+------------------------------------------------------------------+
