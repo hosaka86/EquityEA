@@ -1,13 +1,13 @@
 //+------------------------------------------------------------------+
-//|                                            EquityMonitor-V106.mq5 |
+//|                                            EquityMonitor-V107.mq5 |
 //|                                       Developed for YouTube Tutorial |
 //|                                                                      |
 //+------------------------------------------------------------------+
 #property copyright "Your Name"
 #property link      ""
-#property version   "1.06"
+#property version   "1.07"
 #property description "Equity Monitor EA - Advanced Drawdown Tracking"
-#property description "Version: 1.06 | Fixed log spam and position close errors"
+#property description "Version: 1.07 | Added killswitch trigger type selection"
 #property description ""
 #property description "Features:"
 #property description "- Real-time equity & drawdown monitoring"
@@ -19,7 +19,7 @@
 //+------------------------------------------------------------------+
 //| DEFINES                                                           |
 //+------------------------------------------------------------------+
-#define VERSION "1.06"
+#define VERSION "1.07"
 #define DASHBOARD_PREFIX "EM_"  // Prefix for all dashboard objects
 
 //+------------------------------------------------------------------+
@@ -57,6 +57,27 @@ enum ENUM_DRAWDOWN_MODE
 {
    DRAWDOWN_EQUITY = 0,      // Equity-based (includes floating P/L)
    DRAWDOWN_BALANCE = 1      // Balance-based (closed trades only)
+};
+
+/**
+ * Killswitch Trigger Types:
+ *
+ * TRIGGER_CURRENT_DD (Current/Trailing Drawdown):
+ *   - Triggers based on current distance from peak
+ *   - Resets to 0% when new peak is reached
+ *   - More lenient - allows recovery
+ *   - Example: Peak $10k → $9k (10% DD) → $10.5k (0% DD, new peak)
+ *
+ * TRIGGER_MAX_DD (Maximum/Overall Drawdown):
+ *   - Triggers based on the worst drawdown ever reached
+ *   - Never resets - tracks historical maximum
+ *   - Common for prop firms with strict rules
+ *   - Example: Peak $10k → $9k (10% max DD) → $10.5k (10% max DD stays)
+ */
+enum ENUM_KILLSWITCH_TRIGGER
+{
+   TRIGGER_CURRENT_DD = 0,   // Current Drawdown (Trailing)
+   TRIGGER_MAX_DD = 1        // Maximum Drawdown (Overall)
 };
 
 //+------------------------------------------------------------------+
@@ -98,6 +119,7 @@ input string InpFileName = "EquityMonitor_Stats.csv";  // Stats Filename
 //═══════════════════════════════════════════════════════════════════
 sinput string Sep4 = "════════ KILLSWITCH ════════";
 input double InpMaxDrawdownThreshold = 0.0;        // Max Drawdown Threshold % (0 = Disabled)
+input ENUM_KILLSWITCH_TRIGGER InpKillswitchTrigger = TRIGGER_CURRENT_DD;  // Trigger Type
 input bool InpAggressiveCloseMode = false;         // Aggressive Mode (Continuously Close Positions)
 input bool InpKillswitchAlert = true;              // Show Alert When Triggered
 
@@ -527,8 +549,14 @@ void MonitorKillswitch()
    if(InpMaxDrawdownThreshold <= 0.0)
       return;
 
+   // Select which drawdown value to monitor based on trigger type
+   double monitoredDD = (InpKillswitchTrigger == TRIGGER_CURRENT_DD) ?
+                        g_CurrentDrawdownPercent : g_MaxDrawdownPercent;
+   string triggerType = (InpKillswitchTrigger == TRIGGER_CURRENT_DD) ?
+                        "Current DD" : "Max DD";
+
    // Check if drawdown threshold is exceeded
-   if(g_CurrentDrawdownPercent >= InpMaxDrawdownThreshold)
+   if(monitoredDD >= InpMaxDrawdownThreshold)
    {
       // Trigger killswitch if not already triggered
       if(!g_KillswitchTriggered)
@@ -538,7 +566,8 @@ void MonitorKillswitch()
 
          Print("═══════════════════════════════════════════════════════════");
          Print("!!! KILLSWITCH TRIGGERED !!!");
-         Print("Max Drawdown Threshold Exceeded: ", DoubleToString(g_CurrentDrawdownPercent, 2), "% >= ",
+         Print("Trigger Type: ", triggerType);
+         Print("Drawdown Threshold Exceeded: ", DoubleToString(monitoredDD, 2), "% >= ",
                DoubleToString(InpMaxDrawdownThreshold, 2), "%");
          Print("═══════════════════════════════════════════════════════════");
 
@@ -546,7 +575,8 @@ void MonitorKillswitch()
          if(InpKillswitchAlert && !g_AlertShown)
          {
             string alertMsg = "KILLSWITCH TRIGGERED!\n\n" +
-                            "Drawdown: " + DoubleToString(g_CurrentDrawdownPercent, 2) + "%\n" +
+                            "Type: " + triggerType + "\n" +
+                            "Drawdown: " + DoubleToString(monitoredDD, 2) + "%\n" +
                             "Threshold: " + DoubleToString(InpMaxDrawdownThreshold, 2) + "%\n\n" +
                             "Closing all positions...";
             Alert(alertMsg);
