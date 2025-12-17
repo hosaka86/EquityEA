@@ -1,13 +1,13 @@
 //+------------------------------------------------------------------+
-//|                                            EquityMonitor-V102.mq5 |
+//|                                            EquityMonitor-V103.mq5 |
 //|                                       Developed for YouTube Tutorial |
 //|                                                                      |
 //+------------------------------------------------------------------+
 #property copyright "Your Name"
 #property link      ""
-#property version   "1.02"
+#property version   "1.03"
 #property description "Equity Monitor EA - Advanced Drawdown Tracking"
-#property description "Version: 1.02 | Added killswitch protection feature"
+#property description "Version: 1.03 | Fixed net profit calculation to include swap and commission"
 #property description ""
 #property description "Features:"
 #property description "- Real-time equity & drawdown monitoring"
@@ -19,7 +19,7 @@
 //+------------------------------------------------------------------+
 //| DEFINES                                                           |
 //+------------------------------------------------------------------+
-#define VERSION "1.02"
+#define VERSION "1.03"
 #define DASHBOARD_PREFIX "EM_"  // Prefix for all dashboard objects
 
 //+------------------------------------------------------------------+
@@ -362,26 +362,31 @@ void CalculateHistoricalStats()
          ENUM_DEAL_ENTRY dealEntry = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(ticket, DEAL_ENTRY);
          if(dealEntry == DEAL_ENTRY_OUT)  // Exit deal = closed trade
          {
+            // Calculate true profit including swap and commission
             double profit = HistoryDealGetDouble(ticket, DEAL_PROFIT);
+            double swap = HistoryDealGetDouble(ticket, DEAL_SWAP);
+            double commission = HistoryDealGetDouble(ticket, DEAL_COMMISSION);
+            double netProfit = profit + swap + commission;
+
             datetime dealTime = (datetime)HistoryDealGetInteger(ticket, DEAL_TIME);
 
             g_TotalTrades++;
 
-            if(profit > 0)
+            if(netProfit > 0)
             {
                g_WinningTrades++;
-               g_TotalProfit += profit;
+               g_TotalProfit += netProfit;
             }
-            else if(profit < 0)
+            else if(netProfit < 0)
             {
                g_LosingTrades++;
-               g_TotalLoss += MathAbs(profit);
+               g_TotalLoss += MathAbs(netProfit);
             }
 
             // Add to daily P/L if trade closed today
             if(dealTime >= todayStart)
             {
-               g_DailyPL += profit;
+               g_DailyPL += netProfit;
             }
 
             // Update last trade time
@@ -441,26 +446,30 @@ void UpdateTradingStatistics()
          ENUM_DEAL_ENTRY dealEntry = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(ticket, DEAL_ENTRY);
          if(dealEntry == DEAL_ENTRY_OUT)
          {
+            // Calculate true profit including swap and commission
             double profit = HistoryDealGetDouble(ticket, DEAL_PROFIT);
+            double swap = HistoryDealGetDouble(ticket, DEAL_SWAP);
+            double commission = HistoryDealGetDouble(ticket, DEAL_COMMISSION);
+            double netProfit = profit + swap + commission;
 
             g_TotalTrades++;
             newTradeFound = true;
 
-            if(profit > 0)
+            if(netProfit > 0)
             {
                g_WinningTrades++;
-               g_TotalProfit += profit;
+               g_TotalProfit += netProfit;
             }
-            else if(profit < 0)
+            else if(netProfit < 0)
             {
                g_LosingTrades++;
-               g_TotalLoss += MathAbs(profit);
+               g_TotalLoss += MathAbs(netProfit);
             }
 
             // Add to daily P/L if trade closed today
             if(dealTime >= todayStart)
             {
-               g_DailyPL += profit;
+               g_DailyPL += netProfit;
             }
 
             // Update last trade time
