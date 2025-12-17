@@ -1,13 +1,13 @@
 //+------------------------------------------------------------------+
-//|                                            EquityMonitor-V103.mq5 |
+//|                                            EquityMonitor-V104.mq5 |
 //|                                       Developed for YouTube Tutorial |
 //|                                                                      |
 //+------------------------------------------------------------------+
 #property copyright "Your Name"
 #property link      ""
-#property version   "1.03"
+#property version   "1.04"
 #property description "Equity Monitor EA - Advanced Drawdown Tracking"
-#property description "Version: 1.03 | Fixed net profit calculation to include swap and commission"
+#property description "Version: 1.04 | Improved killswitch position closing with retry logic"
 #property description ""
 #property description "Features:"
 #property description "- Real-time equity & drawdown monitoring"
@@ -19,7 +19,7 @@
 //+------------------------------------------------------------------+
 //| DEFINES                                                           |
 //+------------------------------------------------------------------+
-#define VERSION "1.03"
+#define VERSION "1.04"
 #define DASHBOARD_PREFIX "EM_"  // Prefix for all dashboard objects
 
 //+------------------------------------------------------------------+
@@ -551,59 +551,123 @@ int CloseAllPositions()
 {
    int totalPositions = PositionsTotal();
    int closedCount = 0;
+   int failedCount = 0;
 
    if(totalPositions == 0)
       return 0;
+
+   Print("Attempting to close ", totalPositions, " position(s)...");
 
    // Iterate backwards to avoid index shifting issues
    for(int i = totalPositions - 1; i >= 0; i--)
    {
       ulong ticket = PositionGetTicket(i);
-      if(ticket > 0)
+      if(ticket <= 0)
+         continue;
+
+      // CRITICAL: Select position by ticket to ensure data is current
+      if(!PositionSelectByTicket(ticket))
       {
-         string symbol = PositionGetString(POSITION_SYMBOL);
-         ulong magic = PositionGetInteger(POSITION_MAGIC);
+         Print("WARNING: Position #", ticket, " no longer exists (may already be closed)");
+         continue;
+      }
 
-         // Close the position
-         MqlTradeRequest request;
-         MqlTradeResult result;
-         ZeroMemory(request);
-         ZeroMemory(result);
+      string symbol = PositionGetString(POSITION_SYMBOL);
+      ulong magic = PositionGetInteger(POSITION_MAGIC);
+      double volume = PositionGetDouble(POSITION_VOLUME);
+      ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
 
-         request.action = TRADE_ACTION_DEAL;
-         request.position = ticket;
-         request.symbol = symbol;
-         request.volume = PositionGetDouble(POSITION_VOLUME);
-         request.deviation = 10;
-         request.magic = magic;
-         request.comment = "Killswitch Close";
+      // Check if trading is allowed on this symbol
+      if(!SymbolInfoInteger(symbol, SYMBOL_TRADE_MODE))
+      {
+         Print("WARNING: Trading disabled on ", symbol, " - cannot close position #", ticket);
+         failedCount++;
+         continue;
+      }
 
-         // Determine close direction
-         if(PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY)
-            request.type = ORDER_TYPE_SELL;
-         else
-            request.type = ORDER_TYPE_BUY;
+      // Prepare close request
+      MqlTradeRequest request;
+      MqlTradeResult result;
+      ZeroMemory(request);
+      ZeroMemory(result);
 
-         request.price = (request.type == ORDER_TYPE_SELL) ?
-                        SymbolInfoDouble(symbol, SYMBOL_BID) :
-                        SymbolInfoDouble(symbol, SYMBOL_ASK);
+      request.action = TRADE_ACTION_DEAL;
+      request.position = ticket;
+      request.symbol = symbol;
+      request.volume = volume;
+      request.deviation = 50;  // Increased deviation for volatile markets
+      request.magic = magic;
+      request.comment = "Killswitch Close";
+      request.type_filling = ORDER_FILLING_FOK;  // Fill or Kill
+
+      // Determine close direction and price
+      if(posType == POSITION_TYPE_BUY)
+      {
+         request.type = ORDER_TYPE_SELL;
+         request.price = SymbolInfoDouble(symbol, SYMBOL_BID);
+      }
+      else
+      {
+         request.type = ORDER_TYPE_BUY;
+         request.price = SymbolInfoDouble(symbol, SYMBOL_ASK);
+      }
+
+      // Attempt to close position with retry logic
+      bool closed = false;
+      for(int attempt = 1; attempt <= 3; attempt++)
+      {
+         ResetLastError();
 
          if(OrderSend(request, result))
          {
-            closedCount++;
-            Print("Killswitch closed position #", ticket, " (", symbol, ")");
+            if(result.retcode == TRADE_RETCODE_DONE || result.retcode == TRADE_RETCODE_PLACED)
+            {
+               closedCount++;
+               Print("Killswitch closed position #", ticket, " (", symbol, ", ", volume, " lot)");
+               closed = true;
+               break;
+            }
+         }
+
+         // Handle specific error codes
+         if(result.retcode == TRADE_RETCODE_REJECT)
+         {
+            Print("WARNING: Broker rejected close request for #", ticket, " (attempt ", attempt, "/3)");
+         }
+         else if(result.retcode == TRADE_RETCODE_INVALID_PRICE)
+         {
+            Print("WARNING: Invalid price for #", ticket, " - refreshing (attempt ", attempt, "/3)");
+            // Refresh price
+            request.price = (posType == POSITION_TYPE_BUY) ?
+                           SymbolInfoDouble(symbol, SYMBOL_BID) :
+                           SymbolInfoDouble(symbol, SYMBOL_ASK);
+         }
+         else if(result.retcode == TRADE_RETCODE_MARKET_CLOSED)
+         {
+            Print("ERROR: Market closed for ", symbol, " - cannot close position #", ticket);
+            failedCount++;
+            break;
          }
          else
          {
-            Print("ERROR: Failed to close position #", ticket, " - Error code: ", GetLastError());
+            Print("WARNING: Close failed for #", ticket, " - Retcode: ", result.retcode,
+                  ", Error: ", GetLastError(), " (attempt ", attempt, "/3)");
          }
+
+         // Wait before retry
+         if(attempt < 3)
+            Sleep(100);
+      }
+
+      if(!closed)
+      {
+         failedCount++;
+         Print("ERROR: Failed to close position #", ticket, " after 3 attempts - Final retcode: ", result.retcode);
       }
    }
 
-   if(closedCount > 0)
-   {
-      Print("Killswitch closed ", closedCount, " position(s)");
-   }
+   // Summary
+   Print("Killswitch Summary: ", closedCount, " closed, ", failedCount, " failed");
 
    return closedCount;
 }
