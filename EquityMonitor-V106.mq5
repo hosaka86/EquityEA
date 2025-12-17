@@ -1,13 +1,13 @@
 //+------------------------------------------------------------------+
-//|                                            EquityMonitor-V105.mq5 |
+//|                                            EquityMonitor-V106.mq5 |
 //|                                       Developed for YouTube Tutorial |
 //|                                                                      |
 //+------------------------------------------------------------------+
 #property copyright "Your Name"
 #property link      ""
-#property version   "1.05"
+#property version   "1.06"
 #property description "Equity Monitor EA - Advanced Drawdown Tracking"
-#property description "Version: 1.05 | Reduced log spam by throttling routine messages"
+#property description "Version: 1.06 | Fixed log spam and position close errors"
 #property description ""
 #property description "Features:"
 #property description "- Real-time equity & drawdown monitoring"
@@ -19,7 +19,7 @@
 //+------------------------------------------------------------------+
 //| DEFINES                                                           |
 //+------------------------------------------------------------------+
-#define VERSION "1.05"
+#define VERSION "1.06"
 #define DASHBOARD_PREFIX "EM_"  // Prefix for all dashboard objects
 
 //+------------------------------------------------------------------+
@@ -304,11 +304,12 @@ void UpdateEquityTracking()
    {
       g_PeakEquity = currentValue;
 
-      // Only log at save intervals to reduce spam
-      if(ShouldAutoSave() || g_LastLogTime == 0)
+      // Only log at intervals to reduce spam
+      if(ShouldLog())
       {
          string mode = (InpDrawdownMode == DRAWDOWN_EQUITY) ? "Equity" : "Balance";
          Print("New Peak ", mode, " reached: ", g_PeakEquity);
+         g_LastLogTime = TimeCurrent();
       }
    }
 
@@ -331,10 +332,11 @@ void UpdateEquityTracking()
       g_MaxDrawdown = g_CurrentDrawdown;
       g_MaxDrawdownPercent = g_CurrentDrawdownPercent;
 
-      // Only log at save intervals to reduce spam
-      if(ShouldAutoSave() || g_LastLogTime == 0)
+      // Only log at intervals to reduce spam
+      if(ShouldLog())
       {
          Print("New Maximum Drawdown: ", g_MaxDrawdown, " (", g_MaxDrawdownPercent, "%)");
+         g_LastLogTime = TimeCurrent();
       }
    }
 }
@@ -502,10 +504,11 @@ void UpdateTradingStatistics()
       g_NetProfit = g_TotalProfit - g_TotalLoss;
       g_WinRate = (g_TotalTrades > 0) ? (g_WinningTrades / (double)g_TotalTrades * 100.0) : 0.0;
 
-      // Only log at save intervals to reduce spam
-      if(ShouldAutoSave() || g_LastLogTime == 0)
+      // Only log at intervals to reduce spam
+      if(ShouldLog())
       {
          Print("New trade detected. Total: ", g_TotalTrades, ", Win Rate: ", DoubleToString(g_WinRate, 2), "%");
+         g_LastLogTime = TimeCurrent();
       }
    }
 }
@@ -560,6 +563,28 @@ void MonitorKillswitch()
          CloseAllPositions();
       }
    }
+}
+
+/**
+ * Gets the appropriate filling mode for a symbol
+ * @param symbol Symbol name
+ * @return Supported filling mode for the symbol
+ */
+ENUM_ORDER_TYPE_FILLING GetSymbolFillingMode(string symbol)
+{
+   // Get supported filling modes from symbol
+   uint filling = (uint)SymbolInfoInteger(symbol, SYMBOL_FILLING_MODE);
+
+   // Try in order of preference: Return, IOC, FOK
+   if((filling & SYMBOL_FILLING_RETURN) == SYMBOL_FILLING_RETURN)
+      return ORDER_FILLING_RETURN;
+   else if((filling & SYMBOL_FILLING_IOC) == SYMBOL_FILLING_IOC)
+      return ORDER_FILLING_IOC;
+   else if((filling & SYMBOL_FILLING_FOK) == SYMBOL_FILLING_FOK)
+      return ORDER_FILLING_FOK;
+
+   // Default to Return if nothing else works
+   return ORDER_FILLING_RETURN;
 }
 
 /**
@@ -618,7 +643,7 @@ int CloseAllPositions()
       request.deviation = 50;  // Increased deviation for volatile markets
       request.magic = magic;
       request.comment = "Killswitch Close";
-      request.type_filling = ORDER_FILLING_FOK;  // Fill or Kill
+      request.type_filling = GetSymbolFillingMode(symbol);  // Use symbol's supported filling mode
 
       // Determine close direction and price
       if(posType == POSITION_TYPE_BUY)
@@ -634,6 +659,9 @@ int CloseAllPositions()
 
       // Attempt to close position with retry logic
       bool closed = false;
+      uint lastRetcode = 0;
+      int lastError = 0;
+
       for(int attempt = 1; attempt <= 3; attempt++)
       {
          ResetLastError();
@@ -649,40 +677,36 @@ int CloseAllPositions()
             }
          }
 
-         // Handle specific error codes
-         if(result.retcode == TRADE_RETCODE_REJECT)
+         // Store last error for final reporting
+         lastRetcode = result.retcode;
+         lastError = GetLastError();
+
+         // Handle specific error codes (silently retry, only log if all attempts fail)
+         if(result.retcode == TRADE_RETCODE_INVALID_PRICE)
          {
-            Print("WARNING: Broker rejected close request for #", ticket, " (attempt ", attempt, "/3)");
-         }
-         else if(result.retcode == TRADE_RETCODE_INVALID_PRICE)
-         {
-            Print("WARNING: Invalid price for #", ticket, " - refreshing (attempt ", attempt, "/3)");
-            // Refresh price
+            // Refresh price and retry
             request.price = (posType == POSITION_TYPE_BUY) ?
                            SymbolInfoDouble(symbol, SYMBOL_BID) :
                            SymbolInfoDouble(symbol, SYMBOL_ASK);
          }
          else if(result.retcode == TRADE_RETCODE_MARKET_CLOSED)
          {
+            // Market closed - no point retrying
             Print("ERROR: Market closed for ", symbol, " - cannot close position #", ticket);
             failedCount++;
             break;
          }
-         else
-         {
-            Print("WARNING: Close failed for #", ticket, " - Retcode: ", result.retcode,
-                  ", Error: ", GetLastError(), " (attempt ", attempt, "/3)");
-         }
 
-         // Wait before retry
+         // Wait before retry (silent)
          if(attempt < 3)
             Sleep(100);
       }
 
+      // Only log if all attempts failed
       if(!closed)
       {
          failedCount++;
-         Print("ERROR: Failed to close position #", ticket, " after 3 attempts - Final retcode: ", result.retcode);
+         Print("ERROR: Failed to close #", ticket, " after 3 attempts - Retcode: ", lastRetcode, ", Error: ", lastError);
       }
    }
 
@@ -704,6 +728,16 @@ bool ShouldAutoSave()
 {
    int intervalSeconds = InpAutoSaveInterval * 60;
    return (TimeCurrent() - g_LastSaveTime >= intervalSeconds);
+}
+
+/**
+ * Checks if routine logs should be printed (throttle to save interval)
+ * @return true if enough time has passed since last log, false otherwise
+ */
+bool ShouldLog()
+{
+   int intervalSeconds = InpAutoSaveInterval * 60;
+   return (TimeCurrent() - g_LastLogTime >= intervalSeconds);
 }
 
 /**
