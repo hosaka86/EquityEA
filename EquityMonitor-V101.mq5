@@ -1,13 +1,13 @@
 //+------------------------------------------------------------------+
-//|                                            EquityMonitor-V100.mq5 |
+//|                                            EquityMonitor-V101.mq5 |
 //|                                       Developed for YouTube Tutorial |
 //|                                                                      |
 //+------------------------------------------------------------------+
 #property copyright "Your Name"
 #property link      ""
-#property version   "1.00"
+#property version   "1.01"
 #property description "Equity Monitor EA - Advanced Drawdown Tracking"
-#property description "Version: 1.00 | Initial Release"
+#property description "Version: 1.01 | Fixed daily PNL reset on new day"
 #property description ""
 #property description "Features:"
 #property description "- Real-time equity & drawdown monitoring"
@@ -19,7 +19,7 @@
 //+------------------------------------------------------------------+
 //| DEFINES                                                           |
 //+------------------------------------------------------------------+
-#define VERSION "1.00"
+#define VERSION "1.01"
 #define DASHBOARD_PREFIX "EM_"  // Prefix for all dashboard objects
 
 //+------------------------------------------------------------------+
@@ -119,6 +119,7 @@ double g_WinRate = 0.0;                 // Win rate in percentage
 
 double g_DailyPL = 0.0;                 // Profit/Loss for current day
 datetime g_LastTradeTime = 0;           // Timestamp of last processed trade
+datetime g_CurrentDay = 0;              // Current day being tracked for daily PNL
 
 //+------------------------------------------------------------------+
 //| GLOBAL VARIABLES - File Management                               |
@@ -324,6 +325,7 @@ void CalculateHistoricalStats()
    g_DailyPL = 0.0;
 
    datetime todayStart = StringToTime(TimeToString(TimeCurrent(), TIME_DATE));
+   g_CurrentDay = todayStart;  // Initialize current day tracker
 
    // Loop through all deals in history
    HistorySelect(0, TimeCurrent());
@@ -387,6 +389,14 @@ void CalculateHistoricalStats()
 void UpdateTradingStatistics()
 {
    datetime todayStart = StringToTime(TimeToString(TimeCurrent(), TIME_DATE));
+
+   // Check if a new day has started
+   if(todayStart != g_CurrentDay)
+   {
+      Print("New day detected. Resetting daily P/L. Previous: ", g_DailyPL);
+      g_DailyPL = 0.0;
+      g_CurrentDay = todayStart;
+   }
 
    // Select history and check for new deals
    HistorySelect(g_LastTradeTime, TimeCurrent());
