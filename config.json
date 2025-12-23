@@ -1,0 +1,26 @@
+{
+  "fish_audio": {
+    "api_key": "c51d1ae1ee32480297e4f5ef98c12ede",
+    "voice_id": "b7204d4e40ef4a548c7c8547b7f73492",
+    "default_settings": {
+      "speed": 1.0,
+      "volume": 0,
+      "model": "s1",
+      "format": "mp3",
+      "normalize": false,
+      "temperature": 0.5,
+      "top_p": 0.5,
+      "repetition_penalty": 1.5
+    },
+    "comments": {
+      "temperature": "Lower values (0.3-0.5) = more consistent, less hallucinations",
+      "top_p": "Lower values (0.3-0.5) = less diverse, more predictable",
+      "repetition_penalty": "Higher values (1.5-2.0) = reduces repetition and unwanted text at end"
+    }
+  },
+  "video": {
+    "resolution": "1920x1080",
+    "fps": 30,
+    "bitrate": "8M"
+  }
+}

@@ -1,0 +1,1 @@
+This simple but crucial function updates the account values. (long-break) We fetch the current balance from the account, (break) then the current equity. (break) The floating profit or loss is simply the difference between equity and balance. (break) This tells us how much unrealized profit we have in open positions. (long-break)

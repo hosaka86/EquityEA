@@ -225,7 +225,7 @@ datetime g_LastLogTime = 0;             // Timestamp of last regular log output
 
 **Narration:**
 
-"Let's implement the OnInit function, (break) which runs once when the EA starts. (long-break) First, we print a nice header to the terminal so you know the EA is running. (break) Then we grab the current account balance and equity. (long-break) If auto-save is enabled, (break) we try to load previous statistics from file. (break) This is crucial, (break) because it allows the EA to remember your peak equity and maximum drawdown, (break) even after restarting MetaTrader. (long-break) If no previous stats exist, (break) we initialize the peak equity based on the chosen mode, (break) either current equity or current balance. (break) Then we calculate all historical statistics from closed trades. (long-break) If the dashboard is enabled, (break) we create all the visual objects on the chart. (break) Finally, we initialize the timestamps and print a confirmation message. (long-break)"
+"Let's implement the On Init function, (break) which runs once when the EA starts. (long-break) First, we print a nice header to the terminal so you know the EA is running. (break) Then we grab the current account balance and equity. (long-break) If auto-save is enabled, (break) we try to load previous statistics from file. (break) This is crucial, (break) because it allows the EA to remember your peak equity and maximum drawdown, (break) even after restarting MetaTrader. (long-break) If no previous stats exist, (break) we initialize the peak equity based on the chosen mode, (break) either current equity or current balance. (break) Then we calculate all historical statistics from closed trades. (long-break) If the dashboard is enabled, (break) we create all the visual objects on the chart. (break) Finally, we initialize the timestamps and print a confirmation message. (long-break)"
 
 ```mql5
 //+------------------------------------------------------------------+
@@ -288,7 +288,7 @@ int OnInit()
 
 **Narration:**
 
-"The OnDeinit function runs when the EA stops. (long-break) We print a header showing the deinitialization reason, (break) which is helpful for debugging. (break) If auto-save is enabled, (break) we save the final statistics to file, (break) ensuring no data is lost. (break) Then we clean up by deleting all dashboard objects from the chart. (break) This prevents cluttering the screen with leftover visual elements. (long-break)"
+"The On Deinit function runs when the EA stops. (long-break) We print a header showing the deinitialization reason, (break) which is helpful for debugging. (break) If auto-save is enabled, (break) we save the final statistics to file, (break) ensuring no data is lost. (break) Then we clean up by deleting all dashboard objects from the chart. (break) This prevents cluttering the screen with leftover visual elements. (long-break)"
 
 ```mql5
 //+------------------------------------------------------------------+
@@ -320,7 +320,7 @@ void OnDeinit(const int reason)
 
 **Narration:**
 
-"OnTick is the heart of our EA, (break) called on every price tick. (long-break) We follow a logical sequence. (break) First, update account values like balance and equity. (break) Then update equity tracking and calculate drawdowns. (break) Next, monitor the killswitch to see if we need to close positions. (long-break) We check for new closed trades and update statistics accordingly. (break) The dashboard is updated every second, (break) not on every tick, (break) to avoid excessive CPU usage. (break) Finally, (break) if the auto-save interval has elapsed, (break) we save the current statistics to file. (long-break)"
+"On Tick is the heart of our EA, (break) called on every price tick. (long-break) We follow a logical sequence. (break) First, update account values like balance and equity. (break) Then update equity tracking and calculate drawdowns. (break) Next, monitor the killswitch to see if we need to close positions. (long-break) We check for new closed trades and update statistics accordingly. (break) The dashboard is updated every second, (break) not on every tick, (break) to avoid excessive CPU usage. (break) Finally, (break) if the auto-save interval has elapsed, (break) we save the current statistics to file. (long-break)"
 
 ```mql5
 //+------------------------------------------------------------------+
